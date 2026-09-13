@@ -15,9 +15,7 @@ const structuredModel = model.withStructuredOutput(chatResponseSchema);
 router.post('/', async (req, res) => {
     try {
         const { message, history } = req.body;
-        console.log("1. Bắt đầu, message:", message);
         const result = await pool.query('SELECT * FROM products');
-        console.log("2. Đã lấy xong products từ DB");
         const productList = result.rows
             .map(p => `- id ${p.id}: ${p.name} - ${p.price}đ. ${p.description}`)
             .join('\n');
@@ -32,10 +30,8 @@ router.post('/', async (req, res) => {
             ]),
             ["human", message]
         ]
-        console.log("3. Chuẩn bị gọi Gemini...");
 
         const response = await structuredModel.invoke(conversation);
-        console.log("4. Gemini đã trả lời:", response);
         res.json(response);
     } catch (err) {
         console.error(err);
