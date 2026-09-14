@@ -28,10 +28,46 @@ app.use('/api/admin/products', adminRoutes);
 app.use('/api/admin/orders', adminOrdersRoutes);
 app.use("/api/admin/stats", adminStatsRoutes);
 
+
 app.get('/api/products', async (req, res) => {
+    const allowedSort = {
+        name: "name",
+        price: "price",
+        newest: "id", // đổi thành "created_at" nếu bảng products có cột này
+    };
+    const allowedOrder = ["asc", "desc"];
+
+    let { category, sort = "newest", order = "desc" } = req.query;
+
+    const sortColumn = allowedSort[sort] || "id";
+    const sortOrder = allowedOrder.includes(String(order).toLowerCase())
+        ? order.toUpperCase()
+        : "DESC";
+
+    try {
+        const params = [];
+        let whereClause = "WHERE is_active = true";
+
+        if (category) {
+            params.push(category);
+            whereClause += ` AND category_id = $${params.length}`;
+        }
+
+        const result = await pool.query(
+            `SELECT * FROM products ${whereClause} ORDER BY ${sortColumn} ${sortOrder}`,
+            params
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Lỗi server' });
+    }
+});
+
+app.get('/api/categories', async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT * FROM products WHERE is_active = true'
+            'SELECT id, name, slug FROM categories ORDER BY name ASC'
         );
         res.json(result.rows);
     } catch (err) {
