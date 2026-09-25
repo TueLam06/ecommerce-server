@@ -32,7 +32,14 @@ router.post('/', async (req, res) => {
         ]
 
         const response = await structuredModel.invoke(conversation);
-        res.json(response);
+
+        // Gửi kèm tên/giá/ảnh để frontend hiện tên sản phẩm thay vì chỉ có id
+        const products = (response.productIds || [])
+            .map((id) => result.rows.find((p) => p.id === id))
+            .filter(Boolean)
+            .map(({ id, name, price, image }) => ({ id, name, price, image }));
+
+        res.json({ ...response, products });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Lỗi khi xử lý chatbot' });
