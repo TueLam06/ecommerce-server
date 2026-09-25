@@ -2,10 +2,12 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { verifyToken, requireAdmin } = require("../middleware/auth.middleware");
+const { restoreStock } = require("../utils/orderStock");
 
 router.use(verifyToken, requireAdmin);
 
 const VALID_STATUSES = ["pending", "confirmed", "shipping", "completed", "cancelled"];
+const DELETABLE_STATUSES = ["completed", "cancelled"];
 
 // GET /api/admin/orders - danh sách đơn hàng, có thể filter ?status=pending
 router.get("/", async (req, res) => {
@@ -100,18 +102,44 @@ router.patch("/:id/status", async (req, res) => {
         });
     }
 
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
+        await client.query("BEGIN");
+
+        const existing = await client.query(
+            "SELECT status FROM orders WHERE id = $1 FOR UPDATE",
+            [id]
+        );
+        if (existing.rows.length === 0) {
+            await client.query("ROLLBACK");
+            return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+        }
+
+        const oldStatus = existing.rows[0].status;
+        // Đơn đã huỷ thì khoá, không cho đổi sang trạng thái khác
+        if (oldStatus === "cancelled") {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ error: "Đơn đã huỷ, không thể đổi trạng thái" });
+        }
+        // Huỷ đơn -> trả lại tồn kho
+        if (status === "cancelled") {
+            await restoreStock(client, id);
+        }
+
+        const result = await client.query(
             "UPDATE orders SET status = $1 WHERE id = $2 RETURNING *",
             [status, id]
         );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
-        }
+
+        await client.query("COMMIT");
         res.json(result.rows[0]);
     } catch (err) {
+        await client.query("ROLLBACK");
         console.error("PATCH /admin/orders/:id/status error:", err);
+        if (err.status) return res.status(err.status).json({ error: err.message });
         res.status(500).json({ error: "Lỗi server khi cập nhật trạng thái" });
+    } finally {
+        client.release();
     }
 });
 
@@ -123,12 +151,17 @@ router.delete("/:id", async (req, res) => {
         await client.query("BEGIN");
 
         const existing = await client.query(
-            "SELECT id FROM orders WHERE id = $1 FOR UPDATE",
+            "SELECT status FROM orders WHERE id = $1 FOR UPDATE",
             [id]
         );
         if (existing.rows.length === 0) {
             await client.query("ROLLBACK");
             return res.status(404).json({ error: "Không tìm thấy đơn hàng" });
+        }
+        // Chỉ xoá được đơn đã kết thúc (giao thành công / đã huỷ)
+        if (!DELETABLE_STATUSES.includes(existing.rows[0].status)) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ error: "Chỉ xoá được đơn đã giao thành công hoặc đã huỷ" });
         }
 
         await client.query("DELETE FROM order_items WHERE order_id = $1", [id]);

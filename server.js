@@ -18,6 +18,7 @@ const cartRoutes = require('./routes/cart.routes')
 const adminRoutes = require('./routes/admin.routes');
 const adminOrdersRoutes = require('./routes/admin.orders.routes');
 const adminStatsRoutes = require("./routes/admin.stats.route")
+const orderRoutes = require('./routes/orders.routes');
 
 app.use('/api/users', userRoutes);
 app.use('/api/chat', chatRoutes);
@@ -27,6 +28,7 @@ app.use('/api/cart', cartRoutes);
 app.use('/api/admin/products', adminRoutes);
 app.use('/api/admin/orders', adminOrdersRoutes);
 app.use("/api/admin/stats", adminStatsRoutes);
+app.use('/api/orders', orderRoutes);
 
 
 app.get('/api/products', async (req, res) => {
