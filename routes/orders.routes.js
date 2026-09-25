@@ -4,6 +4,65 @@ const pool = require("../db");
 const { verifyToken } = require("../middleware/auth.middleware");
 const { restoreStock } = require("../utils/orderStock");
 
+// Chuẩn hoá SĐT để so sánh: bỏ ký tự không phải số, +84/84 -> 0
+function normalizePhone(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    return digits.startsWith("84") ? "0" + digits.slice(2) : digits;
+}
+
+// Giới hạn đơn giản chống dò SĐT: tối đa 10 lần tra cứu / phút / IP
+const trackAttempts = new Map();
+function trackLimiter(req, res, next) {
+    const ip = (req.headers["x-forwarded-for"] || req.ip || "").split(",")[0].trim();
+    const now = Date.now();
+    const entry = trackAttempts.get(ip);
+    if (!entry || now - entry.start > 60_000) {
+        if (trackAttempts.size > 5000) trackAttempts.clear(); // tránh phình bộ nhớ
+        trackAttempts.set(ip, { start: now, count: 1 });
+        return next();
+    }
+    if (++entry.count > 10) {
+        return res.status(429).json({ error: "Bạn tra cứu quá nhiều lần, vui lòng thử lại sau 1 phút" });
+    }
+    next();
+}
+
+// POST /api/orders/track - khách (kể cả không đăng nhập) tra đơn bằng mã đơn + SĐT
+// body: { orderId, phone } — dùng POST để SĐT không nằm trên URL/log
+router.post("/track", trackLimiter, async (req, res) => {
+    const { orderId, phone } = req.body;
+    const id = Number(String(orderId || "").replace(/^#/, ""));
+
+    if (!Number.isInteger(id) || id <= 0 || !phone) {
+        return res.status(400).json({ error: "Vui lòng nhập mã đơn và số điện thoại" });
+    }
+
+    try {
+        const orderResult = await pool.query("SELECT * FROM orders WHERE id = $1", [id]);
+        const order = orderResult.rows[0];
+        // Sai mã hay sai SĐT đều trả chung 1 lỗi để không lộ đơn nào tồn tại
+        if (!order || normalizePhone(order.phone) !== normalizePhone(phone)) {
+            return res.status(404).json({ error: "Không tìm thấy đơn hàng khớp với thông tin đã nhập" });
+        }
+
+        const itemsResult = await pool.query(
+            `SELECT oi.id, oi.product_id, oi.product_name, oi.quantity, oi.price_at_purchase,
+                    p.image, p.is_active AS product_is_active
+             FROM order_items oi
+             LEFT JOIN products p ON oi.product_id = p.id
+             WHERE oi.order_id = $1
+             ORDER BY oi.id`,
+            [id]
+        );
+
+        const { user_id, ...publicOrder } = order;
+        res.json({ ...publicOrder, items: itemsResult.rows });
+    } catch (err) {
+        console.error("POST /orders/track error:", err);
+        res.status(500).json({ error: "Lỗi server" });
+    }
+});
+
 // GET /api/orders/my - lịch sử mua hàng của user đang đăng nhập
 // Mỗi đơn kèm danh sách sản phẩm (items) để hiển thị luôn trên trang lịch sử
 router.get("/my", verifyToken, async (req, res) => {

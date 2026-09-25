@@ -10,7 +10,6 @@ const PORT = process.env.PORT || 5000;
 const pool = require('./db');
 
 const chatRoutes = require('./chat');
-const productRoutes = require("./routes/products");
 const authRoutes = require('./routes/auth.routes');
 const { optionalAuth } = require('./middleware/auth.middleware');
 const userRoutes = require('./routes/users.routes');
@@ -22,7 +21,6 @@ const orderRoutes = require('./routes/orders.routes');
 
 app.use('/api/users', userRoutes);
 app.use('/api/chat', chatRoutes);
-app.use("/api/products", productRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/admin/products', adminRoutes);
@@ -96,11 +94,26 @@ app.get('/api/products/:id', async (req, res) => {
 });
 
 
+// Hiện chỉ giao tại 2 thành phố này (khớp với dropdown ở trang Checkout)
+const DELIVERY_CITIES = ["Thành phố Hà Nội", "Thành phố Hồ Chí Minh"];
+
 app.post("/api/orders", optionalAuth, async (req, res) => {
-    const { customer_name, phone, address } = req.body;
+    const customer_name = String(req.body.customer_name || "").trim();
+    const address = String(req.body.address || "").trim();
+    // Chuẩn hoá SĐT: bỏ khoảng trắng/dấu chấm/gạch, +84 -> 0
+    const phone = String(req.body.phone || "").replace(/[\s.-]/g, "").replace(/^\+84/, "0");
 
     if (!customer_name || !phone || !address) {
         return res.status(400).json({ message: "Thiếu customer_name/phone/address" });
+    }
+    if (customer_name.length < 2 || customer_name.length > 50) {
+        return res.status(400).json({ message: "Họ tên dài từ 2 đến 50 ký tự" });
+    }
+    if (!/^0(3|5|7|8|9)\d{8}$/.test(phone)) {
+        return res.status(400).json({ message: "Số điện thoại không hợp lệ" });
+    }
+    if (address.length > 300 || !DELIVERY_CITIES.some((city) => address.endsWith(`, ${city}`))) {
+        return res.status(400).json({ message: "Địa chỉ không hợp lệ (chỉ giao tại Hà Nội và TP.HCM)" });
     }
 
     const client = await pool.connect();

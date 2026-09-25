@@ -1,9 +1,20 @@
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
+const cloudinary = require("../cloudinary");
 const { verifyToken, requireAdmin } = require("../middleware/auth.middleware");
 
 router.use(verifyToken, requireAdmin);
+
+// Upload ảnh từ URL lên Cloudinary; URL đã là Cloudinary thì giữ nguyên
+async function uploadImageUrl(url) {
+    if (!url) return null;
+    if (url.includes("res.cloudinary.com")) return url;
+    const result = await cloudinary.uploader.upload(url, {
+        folder: "ecommerce/products",
+    });
+    return result.secure_url;
+}
 
 // GET /api/admin/products - admin xem TẤT CẢ, kể cả sản phẩm đã ẩn
 router.get("/", async (req, res) => {
@@ -60,11 +71,19 @@ router.post("/", async (req, res) => {
         return res.status(400).json({ error: "price/stock không được âm" });
     }
 
+    let image;
+    try {
+        image = await uploadImageUrl(image_url);
+    } catch (err) {
+        console.error("Cloudinary upload error:", err);
+        return res.status(400).json({ error: "Không upload được ảnh từ URL này" });
+    }
+
     try {
         const result = await pool.query(
             `INSERT INTO products (name, price, stock, description, image, category_id, is_active)
              VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING *`,
-            [name, price, stock, description || null, image_url || null, category_id || null]
+            [name, price, stock, description || null, image, category_id || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -90,6 +109,17 @@ router.put("/:id", async (req, res) => {
         }
         const current = existing.rows[0];
 
+        // Chỉ upload khi admin đổi sang URL ảnh mới
+        let image = current.image;
+        if (image_url !== undefined && image_url !== current.image) {
+            try {
+                image = await uploadImageUrl(image_url);
+            } catch (err) {
+                console.error("Cloudinary upload error:", err);
+                return res.status(400).json({ error: "Không upload được ảnh từ URL này" });
+            }
+        }
+
         const result = await pool.query(
             `UPDATE products
              SET name = $1, price = $2, description = $3, image = $4, category_id = $5
@@ -98,7 +128,7 @@ router.put("/:id", async (req, res) => {
                 name ?? current.name,
                 price ?? current.price,
                 description ?? current.description,
-                image_url ?? current.image,
+                image,
                 category_id ?? current.category_id,
                 id,
             ]
