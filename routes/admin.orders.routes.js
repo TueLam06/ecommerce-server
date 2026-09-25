@@ -116,10 +116,14 @@ router.patch("/:id/status", async (req, res) => {
         }
 
         const oldStatus = existing.rows[0].status;
-        // Đơn đã huỷ thì khoá, không cho đổi sang trạng thái khác
+        // Đơn đã kết thúc (đã huỷ / đã giao thành công) thì khoá, không cho đổi trạng thái
         if (oldStatus === "cancelled") {
             await client.query("ROLLBACK");
             return res.status(400).json({ error: "Đơn đã huỷ, không thể đổi trạng thái" });
+        }
+        if (oldStatus === "completed") {
+            await client.query("ROLLBACK");
+            return res.status(400).json({ error: "Đơn đã giao thành công, không thể đổi trạng thái" });
         }
         // Huỷ đơn -> trả lại tồn kho
         if (status === "cancelled") {
